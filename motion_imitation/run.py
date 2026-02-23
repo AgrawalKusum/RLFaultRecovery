@@ -242,8 +242,9 @@ def main():
 
     # 2. Look for the normalization statistics (.pkl file)
     # We assume it's in the same folder as the model
-    stats_path = os.path.join(os.path.dirname(args.model_file), "vec_normalize.pkl")
-    
+    #stats_path = os.path.join(os.path.dirname(args.model_file), "vecnormalize.pkl")
+    stats_path = "vec_normalize.pkl"
+
     if os.path.exists(stats_path):
         # Wrap the current env with the saved stats
         # 'training=True' allows the stats to keep updating during the next 195M steps

@@ -86,6 +86,8 @@ def build_imitation_env(motion_files, num_parallel_envs, mode,
   curriculum_episode_length_end = 600
   
   sim_params = locomotion_gym_config.SimulationParameters()
+  sim_params.sim_time_step_s= 0.002
+  sim_params.num_action_repeat = 16
   sim_params.enable_rendering = enable_rendering
   sim_params.allow_knee_contact = True
   sim_params.motor_control_mode = robot_config.MotorControlMode.POSITION
@@ -122,7 +124,7 @@ def build_imitation_env(motion_files, num_parallel_envs, mode,
   env = imitation_wrapper_env.ImitationWrapperEnv(env,
                                                   episode_length_start=curriculum_episode_length_start,
                                                   episode_length_end=curriculum_episode_length_end,
-                                                  curriculum_steps=30000000,
+                                                  curriculum_steps=10000000,
                                                   num_parallel_envs=num_parallel_envs)
   return env
 
