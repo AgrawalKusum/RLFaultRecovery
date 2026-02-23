@@ -1,0 +1,35 @@
+# Python bytecode and caches
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Local logs and output
+logs.txt
+*.log
+
+# Build artifacts (from your previous C++ builds)
+build/
+dist/
+**/build/
+**/CMakeFiles/
+**/CMakeCache.txt
+**/Makefile
+**/cmake_install.cmake
+*.egg-info/
+*.so
+*.o
+*.a
+
+
+# Trained models (if you want to keep the repo light)
+# data/policies/*.zip
+
+# OS specific
+.DS_Store
+Thumbs.db
+
+third_party/**/build/
+third_party/**/CMakeFiles/
+third_party/**/*.o
+third_party/**/*.a
