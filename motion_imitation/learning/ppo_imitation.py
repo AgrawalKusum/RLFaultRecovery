@@ -394,41 +394,75 @@
 #         return self
 # coding=utf-8
 import torch
+import os
 from stable_baselines3 import PPO
+from stable_baselines3.common.callbacks import CheckpointCallback
 
 class PPOImitation(PPO):
     """
     SB3 version of PPOImitation.
     Inherits directly from Stable Baselines3 PPO.
     """
-    def __init__(self, policy, env, gamma=0.95, n_steps=4096, clip_range=0.2, 
-                 ent_coef=0.01, learning_rate=1e-5, batch_size=256, n_epochs=1, 
-                 gae_lambda=0.95, verbose=1, tensorboard_log=None, 
-                 device="auto", _init_setup_model=True, policy_kwargs=None):
+    def __init__(self, policy, env, **kwargs):
 
-        # We map the old SB2 argument names to modern SB3 names
+        # # We map the old SB2 argument names to modern SB3 names
+        # super(PPOImitation, self).__init__(
+        #     policy=policy,
+        #     env=env,
+        #     learning_rate=learning_rate,
+        #     n_steps=n_steps,
+        #     batch_size=batch_size,
+        #     n_epochs=n_epochs,
+        #     gamma=gamma,
+        #     gae_lambda=gae_lambda,
+        #     clip_range=clip_range,
+        #     ent_coef=ent_coef,
+        #     verbose=verbose,
+        #     tensorboard_log=tensorboard_log,
+        #     policy_kwargs=policy_kwargs,
+        #     device=device,
+        #     _init_setup_model=_init_setup_model
+        # )
+
+        # We pop 'device' if it's in kwargs to handle SB3's auto-detection
+        device = kwargs.pop("device", "auto")
         super(PPOImitation, self).__init__(
             policy=policy,
             env=env,
-            learning_rate=learning_rate,
-            n_steps=n_steps,
-            batch_size=batch_size,
-            n_epochs=n_epochs,
-            gamma=gamma,
-            gae_lambda=gae_lambda,
-            clip_range=clip_range,
-            ent_coef=ent_coef,
-            verbose=verbose,
-            tensorboard_log=tensorboard_log,
-            policy_kwargs=policy_kwargs,
             device=device,
-            _init_setup_model=_init_setup_model
+            **kwargs
         )
 
     def learn(self, total_timesteps, callback=None, log_interval=1, tb_log_name="PPO",
-              reset_num_timesteps=True, save_path=None, save_iters=100):
+              reset_num_timesteps=True, save_path=None, save_iters=1000):
         
-        # SB3 handles logging and callbacks internally
+        # # SB3 handles logging and callbacks internally
+        # return super().learn(
+        #     total_timesteps=total_timesteps,
+        #     callback=callback,
+        #     log_interval=log_interval,
+        #     tb_log_name=tb_log_name,
+        #     reset_num_timesteps=reset_num_timesteps
+        # )
+
+        # 1. Handle Checkpointing via SB3 Callbacks
+        if save_path is not None:
+            checkpoint_callback = CheckpointCallback(
+                save_freq=save_iters,
+                save_path=os.path.dirname(save_path),
+                name_prefix="model_checkpoint"
+            )
+            
+            # Combine with any existing callbacks (like the Progress Bar)
+            if callback is not None:
+                if isinstance(callback, list):
+                    callback.append(checkpoint_callback)
+                else:
+                    callback = [callback, checkpoint_callback]
+            else:
+                callback = checkpoint_callback
+
+        # 2. Call the standard SB3 learn method
         return super().learn(
             total_timesteps=total_timesteps,
             callback=callback,
