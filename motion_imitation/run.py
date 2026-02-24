@@ -142,19 +142,24 @@ def test(model, env, num_procs, num_episodes=None):
   else:
     num_local_episodes = np.inf
 
-  o,_ = env.reset()
+  o= env.reset()
   while episode_count < num_local_episodes:
     a, _ = model.predict(o, deterministic=True)
     #o, r, done, info = env.step(a)
     #curr_return += r
-    o, r, terminated, truncated, info = env.step(a) 
-    done = terminated or truncated # Combine for the loop logic
-    curr_return += r[0]
+    o, r, d, info = env.step(a) 
+    
+    curr_return += r
 
-    if terminated[0] or truncated[0]:
-      sum_return += curr_return
-      curr_return = 0
-      episode_count += 1
+    for i in range(num_procs):
+        if d[i]:
+            sum_return += curr_return[i]
+            curr_return[i] = 0
+            episode_count += 1
+            
+            # If we hit our goal mid-loop, stop early
+            if episode_count >= num_local_episodes:
+                break
 
   sum_return = MPI.COMM_WORLD.allreduce(sum_return, MPI.SUM)
   episode_count = MPI.COMM_WORLD.allreduce(episode_count, MPI.SUM)
@@ -173,15 +178,19 @@ def test(model, env, num_procs, num_episodes=None):
 def make_env(args, enable_env_rand):
     def _init():
         # Build raw environment (NO GUI for speed)
+        should_render = (args.mode == "test" and args.visualize)
+        
+        if should_render:
+            print("--- Launching GUI for Testing ---")
+
         raw_env = env_builder.build_imitation_env(
             motion_files=[args.motion_file],
             num_parallel_envs=1,
             mode=args.mode,
             enable_randomizer=enable_env_rand,
-            enable_rendering=False)
+            enable_rendering=should_render)
         
         # Wrap for Gymnasium compatibility
-        from gymnasium.wrappers.compatibility import EnvCompatibility
         env = EnvCompatibility(raw_env)
 
         # Explicitly cast spaces to Gymnasium
@@ -217,7 +226,7 @@ def main():
 
   args = arg_parser.parse_args()
   
-  num_procs = 8
+  num_procs = 1
   os.environ["CUDA_VISIBLE_DEVICES"] = '-1'
   
   enable_env_rand = ENABLE_ENV_RANDOMIZER and (args.mode != "test")
@@ -242,8 +251,8 @@ def main():
 
     # 2. Look for the normalization statistics (.pkl file)
     # We assume it's in the same folder as the model
-    #stats_path = os.path.join(os.path.dirname(args.model_file), "vecnormalize.pkl")
-    stats_path = "vec_normalize.pkl"
+    stats_path = os.path.join(os.path.dirname(args.model_file), "vec_normalize.pkl")
+    #stats_path = "vec_normalize.pkl"
 
     if os.path.exists(stats_path):
         # Wrap the current env with the saved stats
@@ -251,7 +260,7 @@ def main():
         env = VecNormalize.load(stats_path, env)
         env.training = True 
         model.set_env(env)
-        print(f"Successfully loaded normalization stats from {stats_path}")
+        print(f"Successfully loaded normalization stats from {os.path.abspath(stats_path)}")
     else:
         print("Warning: No normalization stats found. Training might be unstable!")
 
