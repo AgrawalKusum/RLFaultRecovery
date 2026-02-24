@@ -226,7 +226,7 @@ def main():
 
   args = arg_parser.parse_args()
   
-  num_procs = 1
+  num_procs = 8
   os.environ["CUDA_VISIBLE_DEVICES"] = '-1'
   
   enable_env_rand = ENABLE_ENV_RANDOMIZER and (args.mode != "test")
