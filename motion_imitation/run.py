@@ -69,7 +69,7 @@ def build_model(env, num_procs, timesteps_per_actorbatch, optim_batchsize, outpu
         n_steps=4096, 
         device="cpu",      # This replaces timesteps_per_actorbatch
         batch_size=256,
-        n_epochs=1,
+        n_epochs=10,
         gamma=0.95,
         gae_lambda=0.95,
         policy_kwargs=policy_kwargs,
