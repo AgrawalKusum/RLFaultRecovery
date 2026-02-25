@@ -80,25 +80,6 @@ def build_model(env, num_procs, timesteps_per_actorbatch, optim_batchsize, outpu
 
 
 def train(model, env, total_timesteps, output_dir="", int_save_freq=0):
-  # if (output_dir == ""):
-  #   save_path = None
-  # else:
-  #   save_path = os.path.join(output_dir, "model.zip")
-  #   if not os.path.exists(output_dir):
-  #     os.makedirs(output_dir)
-  
-
-  # callbacks = []
-  # # Save a checkpoint every n steps
-  # if (output_dir != ""):
-  #   if (int_save_freq > 0):
-  #     int_dir = os.path.join(output_dir, "intermedate")
-  #     callbacks.append(CheckpointCallback(save_freq=int_save_freq, save_path=int_dir,
-  #                                         name_prefix='model'))
-
-  # model.learn(total_timesteps=total_timesteps, save_path=save_path, callback=callbacks)
-
-  # return
   if not os.path.exists(output_dir):
     os.makedirs(output_dir)
   
@@ -118,7 +99,7 @@ def train(model, env, total_timesteps, output_dir="", int_save_freq=0):
 
   # 3. Start Learning (Note: save_path is removed as SB3 learn() doesn't use it)
   print(f"Starting training for {total_timesteps} steps...")
-  model.learn(total_timesteps=total_timesteps, callback=callbacks)
+  model.learn(total_timesteps=total_timesteps, reset_num_timesteps=False, callback=callbacks)
 
   # 4. Final Save (Weights + Stats)
   final_model_path = os.path.join(output_dir, "final_model.zip")
@@ -145,8 +126,6 @@ def test(model, env, num_procs, num_episodes=None):
   o= env.reset()
   while episode_count < num_local_episodes:
     a, _ = model.predict(o, deterministic=True)
-    #o, r, done, info = env.step(a)
-    #curr_return += r
     o, r, d, info = env.step(a) 
     
     curr_return += r
@@ -226,7 +205,7 @@ def main():
 
   args = arg_parser.parse_args()
   
-  num_procs = 8
+  num_procs = 1
   os.environ["CUDA_VISIBLE_DEVICES"] = '-1'
   
   enable_env_rand = ENABLE_ENV_RANDOMIZER and (args.mode != "test")
@@ -241,7 +220,7 @@ def main():
                       timesteps_per_actorbatch=TIMESTEPS_PER_ACTORBATCH,
                       optim_batchsize=OPTIM_BATCHSIZE,
                       output_dir=args.output_dir)
-
+  print(f"Resumed at timestep: {model.num_timesteps}")
   
   if args.model_file != "":
     print(f"Resuming training from: {args.model_file}")
