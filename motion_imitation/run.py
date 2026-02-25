@@ -205,7 +205,7 @@ def main():
 
   args = arg_parser.parse_args()
   
-  num_procs = 8
+  num_procs = 1
   os.environ["CUDA_VISIBLE_DEVICES"] = '-1'
   
   enable_env_rand = ENABLE_ENV_RANDOMIZER and (args.mode != "test")
@@ -213,7 +213,7 @@ def main():
   env = SubprocVecEnv([make_env(args, enable_env_rand) for _ in range(num_procs)])
     
   # Add Normalization (Standard for PPO walking)
-  env = VecNormalize(env, norm_obs=True, norm_reward=True, clip_obs=10.)
+  #env = VecNormalize(env, norm_obs=True, norm_reward=True, clip_obs=10.)
  
   model = build_model(env=env,
                       num_procs=num_procs,
@@ -250,6 +250,9 @@ def main():
             output_dir=args.output_dir,
             int_save_freq=args.int_save_freq)
   elif args.mode == "test":
+      env.training = False        # IMPORTANT
+      env.norm_reward = False
+      print(f"env: {env}")
       test(model=model,
            env=env,
            num_procs=num_procs,
