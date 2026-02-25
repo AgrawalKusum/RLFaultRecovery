@@ -429,7 +429,11 @@ class LocomotionGymEnv(gym.Env):
     self._world_dict = new_dict.copy()
 
   def _termination(self):         ##for now we do not have any termination condition, but we can add some later.
-    return False
+    if self._task and hasattr(self._task, 'done'):
+        return self._task.done(self)
+    # If using the standard imitation task:
+    from motion_imitation.envs import termination_conditions
+    return termination_conditions.imitation_terminal_condition(self)
 
   def _reward(self):
     if self._task:
