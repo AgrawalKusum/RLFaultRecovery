@@ -86,3 +86,47 @@ def imitation_terminal_condition(env,
       or root_rot_fail
 
   return done
+
+def recovery_terminal_condition(env,
+                                 dist_fail_threshold=1.5,
+                                 rot_fail_threshold=0.5 * np.pi):
+
+  pyb = env._pybullet_client
+  task = env._task
+
+  motion_over = task.is_motion_over()
+
+  root_pos_ref, root_rot_ref = pyb.getBasePositionAndOrientation(
+      task.get_ref_model())
+  root_pos_sim, root_rot_sim = pyb.getBasePositionAndOrientation(
+      env.robot.quadruped)
+
+  # Position fail
+  root_pos_diff = np.array(root_pos_ref) - np.array(root_pos_sim)
+  root_pos_fail = (
+      root_pos_diff.dot(root_pos_diff) >
+      dist_fail_threshold * dist_fail_threshold)
+
+  # Rotation fail
+  root_rot_diff = transformations.quaternion_multiply(
+      np.array(root_rot_ref),
+      transformations.quaternion_conjugate(np.array(root_rot_sim)))
+  _, root_rot_diff_angle = pose3d.QuaternionToAxisAngle(root_rot_diff)
+  root_rot_diff_angle = motion_util.normalize_rotation_angle(
+      root_rot_diff_angle)
+  root_rot_fail = (np.abs(root_rot_diff_angle) > rot_fail_threshold)
+
+  # Height fail (new)
+  base_pos, base_orn = pyb.getBasePositionAndOrientation(env.robot.quadruped)
+  height_fail = base_pos[2] < 0.18
+
+  roll, pitch, _ = transformations.euler_from_quaternion(base_orn)
+  # If the robot tilts more than 75 degrees, it's probably not coming back
+  orientation_fail = abs(roll) > 1.3 or abs(pitch) > 1.3
+  done = motion_over \
+      or root_pos_fail \
+      or root_rot_fail \
+      or height_fail \
+      or orientation_fail
+
+  return done
