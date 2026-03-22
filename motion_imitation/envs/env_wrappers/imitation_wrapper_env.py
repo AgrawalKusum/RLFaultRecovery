@@ -19,13 +19,13 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-import gym
+import gymnasium as gym
 import numpy as np
 
 
-class ImitationWrapperEnv(object):
+class ImitationWrapperEnv(gym.Env):
   """An env using for training policy with motion imitation."""
-
+  metadata = {'render.modes': []}
   def __init__(self,
       gym_env,
       episode_length_start=1000,
@@ -38,6 +38,8 @@ class ImitationWrapperEnv(object):
       gym_env: An instance of LocomotionGymEnv.
     """
     self._gym_env = gym_env
+    self._task = self._gym_env.task
+    self.action_space = self._gym_env.action_space
     self.observation_space = self._build_observation_space()
 
     self._episode_length_start = episode_length_start
@@ -69,19 +71,23 @@ class ImitationWrapperEnv(object):
 
     """
     original_observation, reward, done, _ = self._gym_env.step(action)
+
     observation = self._modify_observation(original_observation)
+
     terminated = done
 
-    done |= (self.env_step_counter >= self._max_episode_steps)
+    truncated = False
+    if self.env_step_counter >= self._max_episode_steps:
+      truncated = True
 
-    if not done:
+    if not (terminated or truncated):
       self._total_step_count += 1
 
-    info = {"terminated": terminated}
+    info = {}
 
-    return observation, reward, done, info
+    return observation, reward, terminated, truncated, info
 
-  def reset(self, initial_motor_angles=None, reset_duration=0.0):
+  def reset(self, *, seed=None, options=None):
     """Resets the robot's position in the world or rebuild the sim world.
 
     The simulation world will be rebuilt if self._hard_reset is True.
@@ -95,13 +101,28 @@ class ImitationWrapperEnv(object):
     Returns:
       A numpy array contains the initial observation after reset.
     """
-    original_observation = self._gym_env.reset(initial_motor_angles, reset_duration)
+    super().reset(seed=seed)
+
+  # You were passing arguments before.
+  # If you need them, extract from options.
+    initial_motor_angles = None
+    reset_duration = 0.0
+
+    if options is not None:
+      initial_motor_angles = options.get("initial_motor_angles", None)
+      reset_duration = options.get("reset_duration", 0.0)
+
+    original_observation = self._gym_env.reset(
+        initial_motor_angles, reset_duration)
+
     observation = self._modify_observation(original_observation)
 
     if self._enable_curriculum():
       self._update_time_limit()
 
-    return observation
+    info = {}
+
+    return observation, info
   
   def _modify_observation(self, original_observation):
     """Appends target observations from the reference motion to the observations.
@@ -133,7 +154,11 @@ class ImitationWrapperEnv(object):
     low = np.concatenate([low0, task_low], axis=-1)
     high = np.concatenate([high0, task_high], axis=-1)
 
-    obs_space = gym.spaces.Box(low, high)
+    obs_space = gym.spaces.Box(
+        low=low.astype(np.float32),
+        high=high.astype(np.float32),
+        dtype=np.float32,
+    )
 
     return obs_space
 

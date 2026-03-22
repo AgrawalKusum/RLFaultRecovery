@@ -378,6 +378,9 @@ class LocomotionGymEnv(gym.Env):
       self._robot.Terminate()
     return self._get_observation(), reward, done, {}
 
+  def get_step_counter(self):
+    return self._env_step_counter
+  
   def render(self, mode='rgb_array'):
     if mode != 'rgb_array':
       raise ValueError('Unsupported render mode:{}'.format(mode))

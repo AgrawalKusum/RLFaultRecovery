@@ -1,0 +1,265 @@
+import os
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["IN_SUBPROC"] = "1"
+import inspect
+currentdir = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))
+parentdir = os.path.dirname(currentdir)
+os.sys.path.insert(0, parentdir)
+import gymnasium as gym
+#from gymnasium.wrappers.compatibility import EnvCompatibility
+import argparse
+from mpi4py import MPI
+import numpy as np
+import os
+import random
+import time
+import torch
+from motion_imitation.envs import env_builder as env_builder
+from motion_imitation.learning import imitation_policies as imitation_policies
+from motion_imitation.learning import ppo_imitation as ppo_imitation
+
+from stable_baselines3.common.callbacks import CheckpointCallback, ProgressBarCallback
+from stable_baselines3 import PPO
+from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecNormalize
+from stable_baselines3.common.monitor import Monitor
+
+TIMESTEPS_PER_ACTORBATCH = 4096
+OPTIM_BATCHSIZE = 512
+
+ENABLE_ENV_RANDOMIZER = True
+
+def set_rand_seed(seed=None):
+  if seed is None:
+        seed = int(time.time())
+  torch.manual_seed(seed)
+  np.random.seed(seed)
+  random.seed(seed)
+
+  return
+
+def build_model(env, num_procs, timesteps_per_actorbatch, optim_batchsize, output_dir):
+  policy_kwargs = dict(
+        activation_fn=torch.nn.ReLU,
+        net_arch=dict(pi=[512, 256], vf=[512, 256])
+    )
+
+  timesteps_per_actorbatch = int(np.ceil(float(timesteps_per_actorbatch) / num_procs))
+  optim_batchsize = int(np.ceil(float(optim_batchsize) / num_procs))
+
+  model = PPO(
+        policy="MlpPolicy",
+        env=env,
+        learning_rate=3e-4,
+        n_steps=4096, 
+        device="cpu",      # This replaces timesteps_per_actorbatch
+        batch_size=256,
+        n_epochs=10,
+        gamma=0.95,
+        gae_lambda=0.95,
+        policy_kwargs=policy_kwargs,
+        tensorboard_log=output_dir,
+        verbose=1
+    )
+  return model
+
+
+def train(model, env, total_timesteps, output_dir="", int_save_freq=0):
+  if not os.path.exists(output_dir):
+    os.makedirs(output_dir)
+  
+  callbacks = []
+  
+  # 1. Add the Progress Bar Callback
+  callbacks.append(ProgressBarCallback())
+
+  # 2. Add Intermediate Checkpoints
+  if (output_dir != "" and int_save_freq > 0):
+    int_dir = os.path.join(output_dir, "intermediate")
+    # save_vecnormalize=True ensures stats are saved alongside weights
+    callbacks.append(CheckpointCallback(save_freq=int_save_freq, 
+                                        save_path=int_dir,
+                                        name_prefix='model',
+                                        save_vecnormalize=True))
+
+  # 3. Start Learning (Note: save_path is removed as SB3 learn() doesn't use it)
+  print(f"Starting training for {total_timesteps} steps...")
+  model.learn(total_timesteps=total_timesteps, reset_num_timesteps=False, callback=callbacks)
+
+  # 4. Final Save (Weights + Stats)
+  final_model_path = os.path.join(output_dir, "final_model.zip")
+  model.save(final_model_path)
+  
+  if hasattr(env, "save"):
+    stats_path = os.path.join(output_dir, "vec_normalize.pkl")
+    env.save(stats_path)
+    print(f"Environment stats saved to {stats_path}")
+
+  print(f"Training complete. Final model saved to {final_model_path}")
+  return
+
+def test(model, env, num_procs, num_episodes=None):
+  curr_return = 0
+  sum_return = 0
+  episode_count = 0
+
+  if num_episodes is not None:
+    num_local_episodes = int(np.ceil(float(num_episodes) / num_procs))
+  else:
+    num_local_episodes = np.inf
+
+  o= env.reset()
+  while episode_count < num_local_episodes:
+    a, _ = model.predict(o, deterministic=True)
+    o, r, d, info = env.step(a) 
+    
+    curr_return += r
+
+    for i in range(num_procs):
+        if d[i]:
+            sum_return += curr_return[i]
+            curr_return[i] = 0
+            episode_count += 1
+            
+            # If we hit our goal mid-loop, stop early
+            if episode_count >= num_local_episodes:
+                break
+
+  sum_return = MPI.COMM_WORLD.allreduce(sum_return, MPI.SUM)
+  episode_count = MPI.COMM_WORLD.allreduce(episode_count, MPI.SUM)
+
+  if episode_count > 0:
+      mean_return = sum_return / episode_count
+  else:
+      mean_return = 0
+
+  if MPI.COMM_WORLD.Get_rank() == 0:
+      print("Mean Return: " + str(mean_return))
+      print("Episode Count: " + str(episode_count))
+
+  return
+
+class SB3MultiCorePatch(gym.Wrapper):
+    def reset(self, **kwargs):
+        result = self.env.reset(**kwargs)
+        if isinstance(result, tuple) and len(result) == 2:
+            return result
+        return result, {}
+
+    def step(self, action):
+        result = self.env.step(action)
+        if isinstance(result, tuple):
+            if len(result) == 4: 
+                obs, rew, done, info = result
+                return obs, rew, done, False, info
+            if len(result) == 5: 
+                return result
+        return result
+
+def make_env(args, enable_env_rand):
+    def _init():
+        # Build raw environment (NO GUI for speed)
+        should_render = (args.mode == "test" and args.visualize)
+        
+        if should_render:
+            print("--- Launching GUI for Testing ---")
+
+        raw_env = env_builder.build_recovery_env(
+            motion_files=[args.motion_file],
+            num_parallel_envs=1,
+            mode=args.mode,
+            enable_randomizer=enable_env_rand,
+            enable_rendering=should_render)
+        
+        # Wrap for Gymnasium compatibility
+        env = SB3MultiCorePatch(raw_env)
+
+        # Explicitly cast spaces to Gymnasium
+        env.observation_space = gym.spaces.Box(
+            low=np.array(env.observation_space.low), 
+            high=np.array(env.observation_space.high), 
+            shape=env.observation_space.shape, 
+            dtype=np.float32)
+        env.action_space = gym.spaces.Box(
+            low=np.array(env.action_space.low), 
+            high=np.array(env.action_space.high), 
+            shape=env.action_space.shape, 
+            dtype=np.float32)
+        
+        # Monitor tracks rewards/lengths for logs
+        return Monitor(env)
+    return _init
+
+import multiprocessing as mp
+
+def main():
+  mp.set_start_method('forkserver', force=True)
+  arg_parser = argparse.ArgumentParser()
+  arg_parser.add_argument("--seed", dest="seed", type=int, default=None)
+  arg_parser.add_argument("--mode", dest="mode", type=str, default="train")
+  arg_parser.add_argument("--motion_file", dest="motion_file", type=str, default="motion_imitation/data/motions/dog_pace.txt")
+  arg_parser.add_argument("--visualize", dest="visualize", action="store_true", default=False)
+  arg_parser.add_argument("--output_dir", dest="output_dir", type=str, default="output")
+  arg_parser.add_argument("--num_test_episodes", dest="num_test_episodes", type=int, default=None)
+  arg_parser.add_argument("--model_file", dest="model_file", type=str, default="")
+  arg_parser.add_argument("--total_timesteps", dest="total_timesteps", type=int, default=3e7)
+  arg_parser.add_argument("--int_save_freq", dest="int_save_freq", type=int, default=0) # save intermediate model every n policy steps
+
+  args = arg_parser.parse_args()
+  
+  num_procs = 1
+  os.environ["CUDA_VISIBLE_DEVICES"] = '-1'
+  
+  enable_env_rand = ENABLE_ENV_RANDOMIZER and (args.mode != "test")
+
+  env = SubprocVecEnv([make_env(args, enable_env_rand) for _ in range(num_procs)])
+    
+  # Add Normalization (Standard for PPO walking)
+  if args.model_file == "":
+    print("Starting training from scratch...")
+    env = VecNormalize(env, norm_obs=True, norm_reward=True, clip_obs=10.)
+    model = build_model(env=env,
+                          num_procs=num_procs,
+                          timesteps_per_actorbatch=TIMESTEPS_PER_ACTORBATCH,
+                          optim_batchsize=OPTIM_BATCHSIZE,
+                          output_dir=args.output_dir)
+   
+  if args.model_file != "":
+    # 2. Look for the normalization statistics (.pkl file)
+    # We assume it's in the same folder as the model
+    stats_path = os.path.join(os.path.dirname(args.model_file), "vec_normalize.pkl")
+    #stats_path = "vec_normalize.pkl"
+
+    if os.path.exists(stats_path):
+        # Wrap the current env with the saved stats
+        # 'training=True' allows the stats to keep updating during the next 195M steps
+        env = VecNormalize.load(stats_path, env)
+        env.training = (args.mode == "train") 
+        env.norm_reward = (args.mode == "train")
+        print(f"Successfully loaded normalization stats from {os.path.abspath(stats_path)}")
+    else:
+        print("Warning: No normalization stats found. Training might be unstable!")
+
+    # 1. Load the model weights into the existing env
+    model = PPO.load(args.model_file, env=env)
+    print(f"Resuming training from: {args.model_file}")
+
+  if args.mode == "train":
+      train(model=model, 
+            env=env, 
+            total_timesteps=args.total_timesteps,
+            output_dir=args.output_dir,
+            int_save_freq=args.int_save_freq)
+  elif args.mode == "test":
+      print(f"env: {env}")
+      test(model=model,
+           env=env,
+           num_procs=num_procs,
+           num_episodes=args.num_test_episodes)
+  else:
+      assert False, "Unsupported mode: " + args.mode
+
+  return
+
+if __name__ == '__main__':
+  main()

@@ -213,8 +213,7 @@ def main():
   env = SubprocVecEnv([make_env(args, enable_env_rand) for _ in range(num_procs)])
     
   # Add Normalization (Standard for PPO walking)
-  if args.model_file == "":
-    env = VecNormalize(env, norm_obs=True, norm_reward=True, clip_obs=10.)   #required only if not loading existing stats, i.e. traiing from scratch. not needed for resuming traiing or testing
+  env = VecNormalize(env, norm_obs=True, norm_reward=True, clip_obs=10.)
  
   model = build_model(env=env,
                       num_procs=num_procs,
@@ -251,9 +250,6 @@ def main():
             output_dir=args.output_dir,
             int_save_freq=args.int_save_freq)
   elif args.mode == "test":
-      env.training = False        # IMPORTANT
-      env.norm_reward = False
-      print(f"env: {env}")
       test(model=model,
            env=env,
            num_procs=num_procs,

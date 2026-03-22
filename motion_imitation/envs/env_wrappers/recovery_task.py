@@ -2,26 +2,26 @@ import numpy as np
 from motion_imitation.envs.env_wrappers import imitation_task
 from pybullet_utils import transformations
 
-from motion_imitation.motion_imitation.envs.env_wrappers import imitation_terminal_conditions
+from motion_imitation.envs.env_wrappers import imitation_terminal_conditions
 
 
 class RecoveryImitationTask(imitation_task.ImitationTask):
 
     def __init__(self,
                  terminal_condition=imitation_terminal_conditions.imitation_terminal_condition,
-                 disturbance_min=50,
-                 disturbance_max=100,
-                 disturbance_duration_min=0.02,
-                 disturbance_duration_max=0.08,
-                 disturbance_interval_min=1.0,
-                 disturbance_interval_max=3.0,
+                 disturbance_min=80,
+                 disturbance_max=120,
+                 disturbance_duration_min=0.1,
+                 disturbance_duration_max=0.2,
+                 disturbance_interval_min=0.8,
+                 disturbance_interval_max=1.5,
                  recovery_bonus=2.0,
                  stability_bonus=0.5,
-                 force_increment=10,
+                 force_increment=15,
                  disturbance_cap=250,
                  mastery_threshold=0.8,
                  hysteresis=0.05,
-                 mastery_window=20,
+                 mastery_window=10,
                  **kwargs):
 
         super().__init__( terminal_condition=terminal_condition, **kwargs)
@@ -40,7 +40,7 @@ class RecoveryImitationTask(imitation_task.ImitationTask):
         self._disturbance_end_time = 0
         self._disturbance_force = None
         self._recovering = False
-        self.force_active = False
+        self._force_active = False
         self._force_increment = force_increment
         self._dist_cap = disturbance_cap
         self._mastery_threshold = mastery_threshold
@@ -48,31 +48,64 @@ class RecoveryImitationTask(imitation_task.ImitationTask):
         self._mastery_window = mastery_window
         self._success_count = 0
         self._disturbance_count = 0
+        self._stable_counter = 0
+        self._stable_steps_required=15
+        
+        #evaluation params
+        self._recovery_times=[]
+        self.max_torques=[]
+        self.recovery_successes=0
+        self.total_disturbances=0
+
+        self._recovery_start_step=0
+        self._episode_max_torque=0
+
 
     # ----------------------------------------------------
 
     def reset(self, env):
+        if self._recovering:
+            self._recovery_times.append(None)
+            self.max_torques.append(self._episode_max_torque)
+
         super().reset(env)
         self._force_active = False
         self._recovering = False
-        self._schedule_next_disturbance()
+        self._stable_counter = 0
+        control_dt = env._sim_time_step * env._num_action_repeat
+        self._stable_steps_required = int(0.5 / control_dt)
+        self._schedule_next_disturbance(env)
 
     # ----------------------------------------------------
 
     def update(self, env):
         super().update(env)
-
         current_time = env.get_time_since_reset()
 
-        # Apply disturbance
+        # Phase 1: Disturbance is ACTIVELY being applied
         if self._next_disturbance_time <= current_time <= self._disturbance_end_time:
             self._apply_external_force(env)
-            self._force_active = True
-            self._recovering = True
+            if not self._force_active:  # Trigger ONLY on the very first frame of the push
+                self.total_disturbances += 1
+                self._disturbance_count += 1
+                self._recovery_start_step = env.get_step_counter()
+                self._episode_max_torque = 0
+                self._force_active = True
+                self._recovering = True
+
+        # Phase 2: Disturbance just ended, but robot is still recovering
         if self._force_active and current_time > self._disturbance_end_time:
             self._force_active = False
-            self._disturbance_count += 1
+            # We DON'T reset recovering here; the reward function handles that
             self._schedule_next_disturbance(env)
+            # Check mastery here if you want to include attempts that didn't stabilize yet
+            # self._check_mastery() 
+
+        # Ongoing Metric Tracking
+        if self._recovering:
+            torques = env.robot.GetMotorTorques()
+            current_max = np.max(np.abs(torques))
+            self._episode_max_torque = max(self._episode_max_torque, current_max)
     # ----------------------------------------------------
 
     def reward(self, env):
@@ -82,11 +115,26 @@ class RecoveryImitationTask(imitation_task.ImitationTask):
         stability_reward = self._compute_stability_bonus(env)
 
         recovery_reward = 0
-        if self._recovering and self._is_stable(env):
-            recovery_reward = self._recovery_bonus
-            self._recovering = False
-            self._success_count += 1
-            self._check_mastery()
+        if self._recovering:
+            if self._is_stable(env):
+                self._stable_counter += 1
+            else:
+                self._stable_counter = 0
+
+            if self._stable_counter >= self._stable_steps_required:
+
+                recovery_reward = self._recovery_bonus
+
+                recovery_time = env.get_step_counter() - self._recovery_start_step
+
+                self._recovery_times.append(recovery_time)
+                self.max_torques.append(self._episode_max_torque)
+                self.recovery_successes += 1
+
+                self._recovering = False
+                self._stable_counter = 0
+                self._success_count += 1
+                self._check_mastery()
 
         total = imitation_reward + stability_reward + recovery_reward
 
@@ -126,10 +174,39 @@ class RecoveryImitationTask(imitation_task.ImitationTask):
             objectUniqueId=robot_id,
             linkIndex=-1,
             forceObj=self._disturbance_force,
-            posObj=base_pos,
+            posObj= [0,0,0],
             flags=pyb.WORLD_FRAME
         )
 
+        if hasattr(env, '_is_render') and env._is_render:
+            magnitude = np.linalg.norm(self._disturbance_force)
+            force_visual_scale = 0.005 
+            
+            line_end = [
+                base_pos[0] + self._disturbance_force[0] * force_visual_scale,
+                base_pos[1] + self._disturbance_force[1] * force_visual_scale,
+                base_pos[2] + self._disturbance_force[2] * force_visual_scale
+            ]
+            print(f"DEBUG: Pushing with {self._disturbance_force} at time {env.get_time_since_reset()}")
+            # Draw the Red Arrow
+            pyb.addUserDebugLine(
+                lineFromXYZ=base_pos,
+                lineToXYZ=line_end,
+                lineColorRGB=[1, 0, 0],
+                lineWidth=4,
+                lifeTime=0.05
+            )
+
+            # Draw the Magnitude Text (Yellow)
+            # Offset the text slightly upward ([0, 0, 0.2]) so it doesn't overlap the robot
+            text_pos = [base_pos[0], base_pos[1], base_pos[2] + 0.2]
+            pyb.addUserDebugText(
+                text=f"{magnitude:.1f} N",
+                textPosition=text_pos,
+                textColorRGB=[1, 0, 0], # Yellow
+                textSize=1.2,
+                lifeTime=0.05
+            )
     # ----------------------------------------------------
 
     def _compute_stability_bonus(self, env):

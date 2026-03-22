@@ -210,8 +210,8 @@ def build_recovery_env(motion_files, num_parallel_envs, mode,
     tar_frame_steps=[1, 2, 10, 30],
     ref_state_init_prob=0.9,
     warmup_time=0.25,
-    disturbance_min=60,
-    disturbance_max=80,          # initial max
+    disturbance_min=70,
+    disturbance_max=100,          # initial max
     disturbance_cap=250,         # final max ceiling
     mastery_threshold=0.8,       # 80%
     hysteresis=0.05,             # 5% band
