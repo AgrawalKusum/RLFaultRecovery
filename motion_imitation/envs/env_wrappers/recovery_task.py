@@ -249,3 +249,18 @@ class RecoveryImitationTask(imitation_task.ImitationTask):
         # Reset window
         self._success_count = 0
         self._disturbance_count = 0
+
+    def get_metrics(self):
+        success_rate = (self.recovery_successes / self.total_disturbances) if self.total_disturbances > 0 else 0
+        
+        # Filter out None values from recovery times (None usually means it fell)
+        valid_times = [t for t in self._recovery_times if t is not None]
+        avg_recovery_time = np.mean(valid_times) if valid_times else 0
+        
+        return {
+            "total_disturbances": self.total_disturbances,
+            "success_rate": success_rate,
+            "avg_recovery_time_steps": avg_recovery_time,
+            "max_force_limit": self._dist_max,
+            "peak_torques": self.max_torques
+        }

@@ -96,6 +96,13 @@ def train(model, env, total_timesteps, output_dir="", int_save_freq=0):
     print(f"Environment stats saved to {stats_path}")
 
   print(f"Training complete. Final model saved to {final_model_path}")
+
+  if MPI.COMM_WORLD.Get_rank() == 0:
+        print("\nFinal Training Mastery Check:")
+        # This shows where the curriculum ended (e.g. did it reach 250N?)
+        mastery_data = env.env_method('get_recovery_metrics')
+        final_max = max([m['max_force'] for m in mastery_data])
+        print(f"Final Curriculum Difficulty Reached: {final_max}N")
   return
 
 def test(model, env, num_procs, num_episodes=None):
@@ -103,11 +110,13 @@ def test(model, env, num_procs, num_episodes=None):
   sum_return = 0
   episode_count = 0
 
+  env.env_method('reset_recovery_metrics')
+
   if num_episodes is not None:
     num_local_episodes = int(np.ceil(float(num_episodes) / num_procs))
   else:
     num_local_episodes = np.inf
-
+  
   o= env.reset()
   while episode_count < num_local_episodes:
     a, _ = model.predict(o, deterministic=True)
@@ -127,15 +136,43 @@ def test(model, env, num_procs, num_episodes=None):
 
   sum_return = MPI.COMM_WORLD.allreduce(sum_return, MPI.SUM)
   episode_count = MPI.COMM_WORLD.allreduce(episode_count, MPI.SUM)
+  
 
   if episode_count > 0:
       mean_return = sum_return / episode_count
   else:
       mean_return = 0
+  print(f"Test Results: Episodes: {episode_count} | Mean Return: {mean_return:.2f}")
 
-  if MPI.COMM_WORLD.Get_rank() == 0:
-      print("Mean Return: " + str(mean_return))
-      print("Episode Count: " + str(episode_count))
+#   if MPI.COMM_WORLD.Get_rank() == 0:
+#         # This calls the method on every parallel process and returns a list of dicts
+#       all_metrics = env.env_method('get_recovery_metrics')
+
+#       print("\n" + "="*45)
+#       print("   RECOVERY EVALUATION REPORT")
+#       print("="*45)
+
+#       total_s = 0
+#       total_d = 0
+#       all_times = []
+
+#       for i, m in enumerate(all_metrics):
+#           if "error" in m: continue
+            
+#           rate = (m["successes"] / m["total"] * 100) if m["total"] > 0 else 0
+#           valid_times = [t for t in m["times"] if t is not None]
+#           avg_t = np.mean(valid_times) if valid_times else 0
+            
+#           total_s += m["successes"]
+#           total_d += m["total"]
+#           all_times.extend(valid_times)
+
+#           print(f"Proc {i} | Success: {rate:.1f}% | Avg Time: {avg_t:.1f} steps | Force: {m['max_force']}N")
+        
+#       overall_rate = (total_s / total_d * 100) if total_d > 0 else 0
+#       print("-" * 45)
+#       print(f"OVERALL | Success: {overall_rate:.1f}% | Avg Recov: {np.mean(all_times):.1f} steps")
+#       print("="*45 + "\n")
 
   return
 
@@ -155,6 +192,24 @@ class SB3MultiCorePatch(gym.Wrapper):
             if len(result) == 5: 
                 return result
         return result
+    def get_recovery_metrics(self):
+        """Helper to extract metrics from the task without pickling the whole task."""
+        t = getattr(self.env, '_task', getattr(self.env, 'task', None))
+        if t is None:
+            return {"error": "Task not found"}
+        return {
+            "successes": t.recovery_successes,
+            "total": t.total_disturbances,
+            "times": t._recovery_times,
+            "max_force": t._dist_max
+        }
+    def reset_recovery_metrics(self):
+        """Clears the counters for a fresh evaluation run."""
+        t = getattr(self.env, '_task', getattr(self.env, 'task', None))
+        if t:
+            t.recovery_successes = 0
+            t.total_disturbances = 0
+            t._recovery_times = []
 
 def make_env(args, enable_env_rand):
     def _init():
