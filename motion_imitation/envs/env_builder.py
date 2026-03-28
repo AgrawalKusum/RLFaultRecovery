@@ -15,7 +15,7 @@
 
 import os
 import inspect
-
+import numpy as np
 currentdir = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))
 parentdir = os.path.dirname(os.path.dirname(currentdir))
 os.sys.path.insert(0, parentdir)
@@ -31,7 +31,7 @@ from motion_imitation.envs.env_wrappers import simple_forward_task
 from motion_imitation.envs.env_wrappers import imitation_task
 from motion_imitation.envs.env_wrappers import default_task
 from motion_imitation.envs.env_wrappers import recovery_task
-
+from motion_imitation.envs.env_wrappers import sac_recovery_task
 from motion_imitation.envs.sensors import environment_sensors
 from motion_imitation.envs.sensors import sensor_wrappers
 from motion_imitation.envs.sensors import robot_sensors
@@ -238,3 +238,56 @@ def build_recovery_env(motion_files, num_parallel_envs, mode,
                                                   curriculum_steps=1,
                                                   num_parallel_envs=num_parallel_envs)
   return env
+
+def build_sac_recovery_env(enable_randomizer, enable_rendering, robot_class=laikago.Laikago):
+    sim_params = locomotion_gym_config.SimulationParameters()
+    sim_params.sim_time_step_s = 0.001
+    sim_params.num_action_repeat = 10
+    sim_params.enable_rendering = enable_rendering
+    sim_params.allow_knee_contact = True
+    sim_params.motor_control_mode = robot_config.MotorControlMode.POSITION
+
+    gym_config = locomotion_gym_config.LocomotionGymConfig(simulation_parameters=sim_params)
+
+    # 2. Sensors (Match walking brain for consistent observation space)
+    sensors = [
+        sensor_wrappers.HistoricSensorWrapper(
+            wrapped_sensor=robot_sensors.MotorAngleSensor(num_motors=laikago.NUM_MOTORS), 
+            num_history=3),
+        sensor_wrappers.HistoricSensorWrapper(
+            wrapped_sensor=robot_sensors.IMUSensor(), 
+            num_history=3),
+        sensor_wrappers.HistoricSensorWrapper(
+            wrapped_sensor=environment_sensors.LastActionSensor(num_actions=laikago.NUM_MOTORS), 
+            num_history=3)
+    ]
+
+    # 3. The New SAC Task (This triggers the custom_reset you just wrote)
+    # We pass the default standing pose as the goal
+    from motion_imitation.envs.env_wrappers import sac_recovery_task
+    task = sac_recovery_task.SACRecoveryTask(
+        target_pose = laikago.INIT_MOTOR_ANGLES 
+    )
+
+    # 4. Assemble
+    randomizers = []
+    if enable_randomizer:
+        randomizer = controllable_env_randomizer_from_config.ControllableEnvRandomizerFromConfig(verbose=False)
+        randomizers.append(randomizer)
+
+    env = locomotion_gym_env.LocomotionGymEnv(
+        gym_config=gym_config, 
+        robot_class=robot_class,
+        env_randomizers=randomizers, 
+        robot_sensors=sensors, 
+        task=task)
+
+    # 5. Wrappers (Standardizing the Output)
+    env = observation_dictionary_to_array_wrapper.ObservationDictionaryToArrayWrapper(env)
+    
+    # We use the same PoseOffsetGenerator so the Action Space is [-1, 1] for both models
+    env = trajectory_generator_wrapper_env.TrajectoryGeneratorWrapperEnv(
+        env,
+        trajectory_generator=simple_openloop.LaikagoPoseOffsetGenerator(action_limit=laikago.UPPER_BOUND))
+
+    return env

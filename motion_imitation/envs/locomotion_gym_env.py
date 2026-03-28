@@ -246,39 +246,18 @@ class LocomotionGymEnv(gym.Env):
           allow_knee_contact)
 
     # Reset the pose of the robot.
-    # --- CHAOS INJECTION ---
-    import random
-    from scipy.spatial.transform import Rotation as R
-    
-    # 1. Generate random orientation (Upside down, sideways, etc)
-    # Roll/Pitch/Yaw
-    r_rpy = [random.uniform(-3.14, 3.14), random.uniform(-1.0, 1.0), 0]
-    chaos_quat = self._pybullet_client.getQuaternionFromEuler(r_rpy)
-    
-    # 2. Inject into the robot wrapper so .Reset() uses it
-    if hasattr(self, '_robot') and self._robot:
-        #self._robot.SetBaseOrientation(chaos_quat)
-        #self._robot.SetBasePosition([0, 0, 0.5])
-        body_id = self._robot.quadruped   # robot body unique ID
-
-        pybullet.resetBasePositionAndOrientation(
-            body_id,
-            [0, 0, 0.5],      # position
-            chaos_quat        # orientation (x,y,z,w)
-        )
-
-        pybullet.resetBaseVelocity(
-            body_id,
-            [0, 0, 0],        # linear velocity
-            [0, 0, 0]         # angular velocity
-        )
-    # -----------------------
-    self._robot.Reset(reload_urdf=False,
+    #---Recovery Training Task---#
+    if hasattr(self._task, 'custom_reset'):
+      self._task.custom_reset(self)
+    else:
+        # Default standing reset for nominal walking
+      self._robot.Reset(reload_urdf=False,
                       default_motor_angles=initial_motor_angles,
                       reset_time=reset_duration)
 
     self._pybullet_client.setPhysicsEngineParameter(enableConeFriction=0)
     self._env_step_counter = 0
+    #-----------------------------------
     if reset_visualization_camera:
       self._pybullet_client.resetDebugVisualizerCamera(self._camera_dist,
                                                        self._camera_yaw,
