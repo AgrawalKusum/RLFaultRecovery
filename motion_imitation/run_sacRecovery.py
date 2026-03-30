@@ -65,6 +65,25 @@ class SB3MultiCorePatch(gym.Wrapper):
         except AttributeError:
             # Fallback to the standard behavior
             return super().__getattribute__(name)
+        
+    def get_wrapper_attr(self, name):
+        """ This is the magic bridge for SB3's env_method calls """
+        # 1. Check if the method exists in this wrapper itself
+        if hasattr(self, name):
+            return getattr(self, name)
+        
+        # 2. Check if the method exists in the Task object
+        # We look inside the 'unwrapped' base environment
+        task = getattr(self.env.unwrapped, '_task', None)
+        if task and hasattr(task, name):
+            return getattr(task, name)
+        
+        # 3. Otherwise, keep digging deeper into other wrappers
+        try:
+            return self.env.get_wrapper_attr(name)
+        except AttributeError:
+            # If the next layer is a legacy wrapper without get_wrapper_attr
+            return getattr(self.env, name)
 
     def reset(self, **kwargs):
         # Handle the transition from old gym reset to Gymnasium reset (obs, info)
@@ -81,11 +100,12 @@ class SB3MultiCorePatch(gym.Wrapper):
         if isinstance(result, tuple):
             if len(result) == 4: 
                 obs, rew, done, info = result
-                # Gymnasium expects 5 values (obs, rew, terminated, truncated, info)
-                return obs, rew, done, False, info
-            if len(result) == 5: 
-                return result
-        return result
+                terminated, truncated = done, False
+            else:
+                obs, rew, terminated, truncated, info = result
+        if hasattr(self.env.unwrapped, '_task'):
+            info['is_success'] = getattr(self.env.unwrapped._task, 'last_success', False)
+        return obs, rew, terminated, truncated, info
 
 class RecoveryCallback(BaseCallback):
     def __init__(self, check_freq: int, verbose: int = 1):
@@ -132,6 +152,15 @@ def train(model, env, total_timesteps, output_dir, int_save_freq):
             save_replay_buffer=True
         ))
 
+    print("\n[DEBUG] Testing Curriculum Bridge...")
+    try:
+        # Use your actual training environment variable name (usually 'env')
+        env.env_method('update_curriculum', success=True, steps_at_level=0)
+        print("[SUCCESS] Curriculum link is working! No AttributeErrors.\n")
+    except Exception as e:
+        print(f"[FAILED] Curriculum Bridge Error: {e}")
+        import sys
+        sys.exit(1)
     print(f"Starting SAC training for {total_timesteps} steps...")
     model.learn(total_timesteps=total_timesteps, reset_num_timesteps=False, callback=callbacks, progress_bar=True)
     

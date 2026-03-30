@@ -18,6 +18,7 @@ class SACRecoveryTask(object):
         self._time_penalty = time_penalty
         self._curriculum_level = 0.1  # Starts at 10% of max chaos
         self._success_buffer = []      # Track last 100 episodes
+        self.last_success = False     # Store last success for curriculum update
 
     def __call__(self, env):
         """This makes the task object 'callable' like a function."""
@@ -39,7 +40,10 @@ class SACRecoveryTask(object):
         The 'Chaos' Reset: Randomizes 3D Orientation and Joint Angles.
         This is called by your modified LocomotionGymEnv.reset().
         """
+        print(f"DEBUG: Chaos Reset Triggered! Level: {self._curriculum_level}")
+        
         # 1. Randomize Orientation (Full 3D Chaos)
+        level= self._curriculum_level
         angle_limit = self._get_chaos_limits()
         random_roll = random.uniform(-angle_limit, angle_limit)
         random_pitch = random.uniform(-angle_limit, angle_limit)
@@ -49,13 +53,27 @@ class SACRecoveryTask(object):
             random_roll, random_pitch, random_yaw
         ])
 
-        # 2. Randomize Position (Slightly elevated to prevent clipping)
-        random_pos = [0, 0, 0.5] 
+        # 2. HEIGHT (Curriculum Controlled)
+        # At 0.1: base_height is low (feet touching).
+        # At 1.0: base_height is 0.8m (dropping from air).
+        safe_height = 0.32 + (0.13 * np.cos(max(abs(random_roll), abs(random_pitch))))
+        safe_height = max(0.32, safe_height)
+        chaos_height = 0.6 + random.uniform(0, 0.2)
+        
+        # Linear interpolation between safe and chaos
+        spawn_height = (1 - level) * safe_height + (level * chaos_height)
+        random_pos = [0, 0, spawn_height] 
 
-        # 3. Randomize Joints (Leg Entanglement)
-        # We pick angles within the robot's physical limits
-        joint_limit = 0.2 + (self._curriculum_level * 0.6)
-        random_joints = [random.uniform(-joint_limit, joint_limit) for _ in range(12)]
+        # 3. JOINTS (Curriculum Controlled)
+        # At 0.1: Start exactly at Target Pose (Feet ready).
+        # At 1.0: Start with totally random joints (Legs tangled).
+        target_pose = np.array(self._target_pose)
+        random_noise = max(0, (level - 0.1) * 1.5) # Increases with level
+        
+        random_joints = [
+            t + random.uniform(-random_noise, random_noise) 
+            for t in target_pose
+        ]
 
         # 4. Apply to Physics Engine
         # We set reset_time=0 so the 'fall' starts instantly
@@ -119,7 +137,6 @@ class SACRecoveryTask(object):
         # Encourage the base to be at a standing height (~0.45m for Laikago)
         #base_pos, _ = robot.GetBasePositionAndOrientation()
         base_pos = robot.GetBasePosition()
-        base_orn = robot.GetBaseOrientation()
         r_height = np.exp(-10.0 * (base_pos[2] - 0.45)**2)
 
         # Term 4: Energy Penalty
@@ -145,19 +162,18 @@ class SACRecoveryTask(object):
 
         # If upright, at correct height, and joints are settled, end episode (Success!)
         base_pos = env.robot.GetBasePosition()
-        base_orn = env.robot.GetBaseOrientation()
         roll, pitch, _ = env.robot.GetTrueBaseRollPitchYaw()
         
         is_upright = (abs(roll) < 0.1 and abs(pitch) < 0.1)
         is_high_enough = (base_pos[2] > 0.35)
 
-        cur_joints = env.robot.GetMotorAngles()
-        pose_dist = np.mean(np.square(cur_joints - self._target_pose))
+        cur_joints = np.array(env.robot.GetMotorAngles())
+        target_pose = np.array(self._target_pose)
+        pose_dist = np.mean(np.square(cur_joints - target_pose))
 
         pose_good = pose_dist < 0.05
+
+        success= is_upright and is_high_enough and pose_good
+        self.last_success = success # Store for curriculum update
         
-        if is_upright and is_high_enough and pose_good:
-            # This info dict is what the Callback reads!
-            env._info["is_success"] = True 
-            return True
-        return False
+        return success
