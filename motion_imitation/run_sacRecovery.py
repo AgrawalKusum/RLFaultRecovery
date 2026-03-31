@@ -18,9 +18,10 @@ from stable_baselines3.common.callbacks import CheckpointCallback, BaseCallback
 
 # --- The Curriculum Callback (Handles multi-proc syncing) ---
 class SACCurriculumCallback(BaseCallback):
-    def __init__(self, verbose=0):
+    def __init__(self, curriculum_path, verbose=0):
         super(SACCurriculumCallback, self).__init__(verbose)
         self.steps_at_level = 0
+        self.curriculum_path= curriculum_path
 
     def _on_step(self) -> bool:
         self.steps_at_level += 1
@@ -31,8 +32,10 @@ class SACCurriculumCallback(BaseCallback):
                 success = info.get("is_success", False)
                 # Tell all sub-processes to update their curriculum
                 level_up = self.training_env.env_method('update_curriculum', success, self.steps_at_level)
+
                 if any(level_up):
                     self.steps_at_level = 0
+                    self.training_env.env_method('save_curriculum', self.curriculum_path)
         return True
 
 class SB3MultiCorePatch(gym.Wrapper):
@@ -137,11 +140,11 @@ def make_env(args):
         return Monitor(env)
     return _init
 
-def train(model, env, total_timesteps, output_dir, int_save_freq):
+def train(model, env, total_timesteps, output_dir, int_save_freq, curriculum_path):
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
     
-    callbacks = [SACCurriculumCallback(),
+    callbacks = [SACCurriculumCallback(curriculum_path=curriculum_path),
                  RecoveryCallback(check_freq=1000)]
     if int_save_freq > 0:
         callbacks.append(CheckpointCallback(
@@ -163,7 +166,11 @@ def train(model, env, total_timesteps, output_dir, int_save_freq):
         sys.exit(1)
     print(f"Starting SAC training for {total_timesteps} steps...")
     model.learn(total_timesteps=total_timesteps, reset_num_timesteps=False, callback=callbacks, progress_bar=True)
-    
+
+    # Final save of the curriculum state at the very end of training
+    print("Finalizing training, saving curriculum state...")
+    env.env_method('save_curriculum', os.path.join(output_dir, "curriculum_state.json"))
+
     model.save(os.path.join(output_dir, "final_model"))
     env.save(os.path.join(output_dir, "vec_normalize.pkl"))
 
@@ -238,11 +245,17 @@ def main():
   if args.model_file != "":
     # Load Stats
     stats_path = os.path.join(os.path.dirname(args.model_file), "vec_normalize.pkl")
+    curriculum_path = os.path.join(os.path.dirname(args.model_file), "curriculum_state.json")
     if os.path.exists(stats_path):
         env = VecNormalize.load(stats_path, env)
         env.training = (args.mode == "train")
         env.norm_reward = (args.mode == "train")
         print(f"Loaded Normalization Stats: {stats_path}")
+    
+    if os.path.exists(curriculum_path):
+        env.env_method('load_curriculum', curriculum_path)
+    else:
+        print(f"Warning: No curriculum found at {curriculum_path}. Using 0.1.")
     
     # Load Weights
     model = SAC.load(args.model_file, env=env)
@@ -250,6 +263,8 @@ def main():
   else:
     print("Starting SAC Training from Scratch...")
     env = VecNormalize(env, norm_obs=True, norm_reward=True, clip_obs=10.)
+    curriculum_path = os.path.join(args.output_dir, "curriculum_state.json")
+
     model = SAC("MlpPolicy", env, verbose=1, tensorboard_log=args.output_dir,
                 policy_kwargs=dict(net_arch=[512, 256]), 
                 buffer_size=1000000, batch_size=256, device="cpu")
@@ -257,8 +272,10 @@ def main():
   # 3. Mode Switch
   if args.mode == "train":
       train(model=model, env=env, total_timesteps=args.total_timesteps,
-            output_dir=args.output_dir, int_save_freq=args.int_save_freq)
+            output_dir=args.output_dir, int_save_freq=args.int_save_freq, curriculum_path=curriculum_path)
   elif args.mode == "test":
+      if os.path.exists(curriculum_path):
+          env.env_method('load_curriculum', curriculum_path)
       env.training = False
       env.norm_reward = False
       test(model=model, env=env, num_procs=num_procs, num_episodes=args.num_test_episodes)

@@ -1,5 +1,7 @@
 import numpy as np
 import random
+import json
+import os
 
 class SACRecoveryTask(object):
     def __init__(self, 
@@ -111,6 +113,27 @@ class SACRecoveryTask(object):
         elif avg_success < 0.3 and self._curriculum_level > 0.1:
             self._curriculum_level -= 0.05
             
+        return False
+    
+    def save_curriculum(self, path="output/curriculum_state.json"):
+        """Saves the current level and success buffer to a file."""
+        state = {
+            "level": self._curriculum_level,
+            "buffer": self._success_buffer
+        }
+        with open(path, 'w') as f:
+            json.dump(state, f)
+        print(f"[SAVE] Curriculum state saved at Level: {round(self._curriculum_level, 3)}")
+
+    def load_curriculum(self, path="output/curriculum_state.json"):
+        """Loads the curriculum level and buffer from a file."""
+        if os.path.exists(path):
+            with open(path, 'r') as f:
+                state = json.load(f)
+                self._curriculum_level = state.get("level", 0.1)
+                self._success_buffer = state.get("buffer", [])
+            print(f"[LOAD] Curriculum restored to Level: {round(self._curriculum_level, 3)}")
+            return True
         return False
 
     def reward(self, env):
