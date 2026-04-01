@@ -149,18 +149,18 @@ class SACRecoveryTask(object):
         # Term 1: Pose Reward (How close are we to the 'Ready' stance?)
         # Use negative MSE between current and target joints
         pose_dist = np.mean(np.square(cur_joints - self._target_pose))
-        r_pose = np.exp(-5.0 * pose_dist)
+        r_pose = np.exp(-10.0 * pose_dist)
 
         # Term 2: Uprightness Reward (Penalty for being tilted)
         # We want roll and pitch to be near 0
         orientation_dist = np.sqrt(roll**2 + pitch**2)
-        r_upright = np.exp(-2.0 * orientation_dist)
+        r_upright = np.exp(-3.0 * orientation_dist)
 
         # Term 3: Height Reward
         # Encourage the base to be at a standing height (~0.45m for Laikago)
         #base_pos, _ = robot.GetBasePositionAndOrientation()
         base_pos = robot.GetBasePosition()
-        r_height = np.exp(-10.0 * (base_pos[2] - 0.45)**2)
+        r_height = np.exp(-15.0 * (base_pos[2] - 0.32)**2)
 
         # Term 4: Energy Penalty
         # Discourage spastic leg movements (helps SAC converge on smooth motions)
@@ -171,7 +171,7 @@ class SACRecoveryTask(object):
         r_time = -0.1
         # Total Weighted Reward
         # 0.5 Pose + 0.3 Upright + 0.2 Height + 0.01 Energy - 0.1 Time
-        total_reward = (0.5 * r_pose) + (0.3 * r_upright) + (0.2 * r_height) + (0.01 * r_energy) + r_time
+        total_reward = (1.0* r_pose) + (0.4 * r_upright) + (0.3 * r_height) + (0.01 * r_energy) + r_time
         
         return total_reward
 
@@ -188,13 +188,13 @@ class SACRecoveryTask(object):
         roll, pitch, _ = env.robot.GetTrueBaseRollPitchYaw()
         
         is_upright = (abs(roll) < 0.1 and abs(pitch) < 0.1)
-        is_high_enough = (base_pos[2] > 0.35)
+        is_high_enough = (0.28<base_pos[2] < 0.38)
 
         cur_joints = np.array(env.robot.GetMotorAngles())
         target_pose = np.array(self._target_pose)
         pose_dist = np.mean(np.square(cur_joints - target_pose))
 
-        pose_good = pose_dist < 0.05
+        pose_good = pose_dist < 0.03
 
         success= is_upright and is_high_enough and pose_good
         self.last_success = success # Store for curriculum update
