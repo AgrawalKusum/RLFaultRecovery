@@ -22,6 +22,9 @@ class SACRecoveryTask(object):
         self._success_buffer = []      # Track last 100 episodes
         self.last_success = False     # Store last success for curriculum update
 
+        self._standing_reward = 0.0 # Bonus for successfully standing up (encourages SAC to find it)
+        self._prev_height = None # For progress reward
+
     def __call__(self, env):
         """This makes the task object 'callable' like a function."""
         return self.reward(env)
@@ -36,6 +39,8 @@ class SACRecoveryTask(object):
     def reset(self, env):
         """Standard task reset called by LocomotionGymEnv."""
         self._env = env
+        self._prev_height = None # Reset height tracking for progress reward
+        self._standing_reward = 0.0 # Reset standing reward
 
     def custom_reset(self, env):
         """
@@ -144,12 +149,11 @@ class SACRecoveryTask(object):
         # Get current state
         cur_joints = robot.GetMotorAngles()
         roll, pitch, _ = robot.GetTrueBaseRollPitchYaw()
-        up_vector = robot.GetTrueBaseOrientation() # Quaternion
-        
+                
         # Term 1: Pose Reward (How close are we to the 'Ready' stance?)
         # Use negative MSE between current and target joints
         pose_dist = np.mean(np.square(cur_joints - self._target_pose))
-        r_pose = np.exp(-10.0 * pose_dist)
+        r_pose = np.exp(-8.0 * pose_dist)
 
         # Term 2: Uprightness Reward (Penalty for being tilted)
         # We want roll and pitch to be near 0
@@ -160,19 +164,48 @@ class SACRecoveryTask(object):
         # Encourage the base to be at a standing height (~0.45m for Laikago)
         #base_pos, _ = robot.GetBasePositionAndOrientation()
         base_pos = robot.GetBasePosition()
-        r_height = np.exp(-15.0 * (base_pos[2] - 0.32)**2)
+        target_height = 0.32
+        r_height = np.clip(base_pos[2] / target_height, 0, 1)
 
         # Term 4: Energy Penalty
         # Discourage spastic leg movements (helps SAC converge on smooth motions)
-        r_energy =  np.exp(-0.1 * np.mean(np.square(robot.GetMotorVelocities())))
+        r_energy = -0.002 * np.mean(np.square(robot.GetMotorVelocities()))
 
         #Term 5: Time Penalty
         # Encourage faster recovery by penalizing time taken
-        r_time = -0.1
+        r_time = -0.02
+
+        #Term 6: Progress Reward
+        if self._prev_height is None:
+            self._prev_height = base_pos[2]
+
+        height_progress = base_pos[2] - self._prev_height
+        self._prev_height = base_pos[2]
+        r_progress = 20 * max(0,height_progress)
+        if base_pos[2] > 0.35:
+            r_progress = 0.0
+        if pose_dist < 0.15 and r_upright > 0.5:
+            r_progress += 20 * max(0, height_progress) # Bonus for progress if already somewhat upright and posed
+
+        #Term 7: join interlocking penalty:
+        joint_penalty = -0.005 * np.sum(np.maximum(0, np.abs(cur_joints) - 2.5))
+
+        # Term 8: Stability Bonus (Encourages staying in the zone)
+        r_stability = 0.0
+        if base_pos[2] > 0.28 and r_upright > 0.8:
+            r_stability = 1.0
+            
+        # Term 9: Foot Contact (Encourages weight on feet, not knees)
+        contact = sum(robot.GetFootContacts())
+        r_feet = 0.05 * contact
+
         # Total Weighted Reward
         # 0.5 Pose + 0.3 Upright + 0.2 Height + 0.01 Energy - 0.1 Time
-        total_reward = (1.0* r_pose) + (0.4 * r_upright) + (0.3 * r_height) + (0.01 * r_energy) + r_time
+        total_reward = (0.5* r_pose) + (0.4 * r_upright) + (0.3 * r_height) + r_energy + r_time + joint_penalty + r_progress + self._standing_reward+ r_stability + r_feet
         
+        if random.random() < 0.0001:
+            print("Height:", base_pos[2], "Progress:", height_progress)
+
         return total_reward
 
     def done(self, env):
@@ -186,6 +219,9 @@ class SACRecoveryTask(object):
         # If upright, at correct height, and joints are settled, end episode (Success!)
         base_pos = env.robot.GetBasePosition()
         roll, pitch, _ = env.robot.GetTrueBaseRollPitchYaw()
+
+        lin_vel = np.linalg.norm(env.robot.GetBaseVelocity())
+        is_stable = lin_vel < 0.15
         
         is_upright = (abs(roll) < 0.1 and abs(pitch) < 0.1)
         is_high_enough = (0.28<base_pos[2] < 0.38)
@@ -196,7 +232,9 @@ class SACRecoveryTask(object):
 
         pose_good = pose_dist < 0.03
 
-        success= is_upright and is_high_enough and pose_good
+        success= is_upright and is_high_enough and pose_good and is_stable
+        if success and self._standing_reward == 0.0:
+            self._standing_reward = 20.0
         self.last_success = success # Store for curriculum update
         
         return success

@@ -229,16 +229,17 @@ class Laikago(minitaur.Minitaur):
     all_contacts = self._pybullet_client.getContactPoints(bodyA=self.quadruped)
 
     contacts = [False, False, False, False]
+
     for contact in all_contacts:
-      # Ignore self contacts
-      if contact[_BODY_B_FIELD_NUMBER] == self.quadruped:
-        continue
-      try:
-        toe_link_index = self._foot_link_ids.index(
-            contact[_LINK_A_FIELD_NUMBER])
-        contacts[toe_link_index] = True
-      except ValueError:
-        continue
+        if contact[_BODY_B_FIELD_NUMBER] == self.quadruped:
+            continue
+
+        link = contact[_LINK_A_FIELD_NUMBER]
+
+        if link in self._foot_link_ids:
+            idx = self._foot_link_ids.index(link)
+            leg_id = idx // 2   # convert 8 links → 4 legs
+            contacts[leg_id] = True
 
     return contacts
 
