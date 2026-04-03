@@ -265,11 +265,12 @@ def build_sac_recovery_env(enable_randomizer, enable_rendering, robot_class=laik
     # 3. The New SAC Task (This triggers the custom_reset you just wrote)
     # We pass the default standing pose as the goal
     wide_target = np.array([
-    -0.05,  0.67, -1.25,  # Front Right (Out slightly)
-   -0.05,  0.67, -1.25,  # Front Left (Out slightly)
-    -0.05,  0.67, -1.25,  # Rear Right (PUSHED OUT)
-   -0.05,  0.67, -1.25   # Rear Left (PUSHED OUT)
+    -0.4,  0.67, -1.25,  # Front Right (Out slightly)
+    0.4,  0.67, -1.25,  # Front Left (Out slightly)
+    -0.4,  0.67, -1.25,  # Rear Right (PUSHED OUT)
+    0.4,  0.67, -1.25   # Rear Left (PUSHED OUT)
     ])
+
     task = sac_recovery_task.SACRecoveryTask(
         target_pose = wide_target
     )

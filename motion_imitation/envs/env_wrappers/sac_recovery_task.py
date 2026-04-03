@@ -2,7 +2,7 @@ import numpy as np
 import random
 import json
 import os
-
+import pybullet
 class SACRecoveryTask(object):
     def __init__(self, 
                  target_pose=None, 
@@ -49,11 +49,11 @@ class SACRecoveryTask(object):
         """
         print(f"DEBUG: Chaos Reset Triggered! Level: {self._curriculum_level}")
 
-        if random.random() < 1:
+        if random.random() < 0.2:
             spawn_pos = [0, 0, 0.32] # Target height
             spawn_quat = [0, 0, 0, 1] # Perfectly upright
             joints = self._target_pose
-            print("[DEBUG]: joins=", joints)
+            #print("[DEBUG]: joins=", joints)
             print("DEBUG: Perfect Reset sneak peak")
 
             env.robot.Reset(reload_urdf=False, 

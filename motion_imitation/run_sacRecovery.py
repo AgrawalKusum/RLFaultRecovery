@@ -235,7 +235,7 @@ def main():
 
   args = arg_parser.parse_args()
   
-  num_procs = 1
+  num_procs = 8
   os.environ["CUDA_VISIBLE_DEVICES"] = '-1'
 
   # 1. Setup Environment
