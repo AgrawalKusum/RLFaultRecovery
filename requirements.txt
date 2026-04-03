@@ -1,9 +1,10 @@
-attrs>=23.1.0
+attrs==23.1.0
+gym==0.26.2
 gymnasium==0.29.1
-mpi4py>=3.1.5
-numpy>=1.26.0
-pybullet>=3.2.5
-stable-baselines3>=2.2.1 
+numpy==1.26.0
+pybullet==3.2.5
+stable-baselines3==2.7.1
+tensorflow==2.16.1 
 tqdm
 numba
 quadprog

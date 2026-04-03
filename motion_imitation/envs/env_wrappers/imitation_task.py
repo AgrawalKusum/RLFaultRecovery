@@ -21,6 +21,8 @@ from __future__ import print_function
 
 import os
 import inspect
+
+from third_party.unitree_legged_sdk.pybind11.tests import env
 currentdir = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))
 parentdir = os.path.dirname(os.path.dirname(currentdir))
 os.sys.path.insert(0, parentdir)
@@ -202,7 +204,8 @@ class ImitationTask(object):
       perturb_state = rand_val < self._perturb_init_state_prob
 
     self._sync_sim_model(perturb_state)
-
+    # Add this right before the 'return' in the working nominal reset
+    #print(f"STABLE_POSE_EXTRACTED = {list(env.robot.GetMotorAngles())}")
     return
 
   def update(self, env):

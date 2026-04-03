@@ -264,9 +264,14 @@ def build_sac_recovery_env(enable_randomizer, enable_rendering, robot_class=laik
 
     # 3. The New SAC Task (This triggers the custom_reset you just wrote)
     # We pass the default standing pose as the goal
-    from motion_imitation.envs.env_wrappers import sac_recovery_task
+    wide_target = np.array([
+    -0.05,  0.67, -1.25,  # Front Right (Out slightly)
+   -0.05,  0.67, -1.25,  # Front Left (Out slightly)
+    -0.05,  0.67, -1.25,  # Rear Right (PUSHED OUT)
+   -0.05,  0.67, -1.25   # Rear Left (PUSHED OUT)
+    ])
     task = sac_recovery_task.SACRecoveryTask(
-        target_pose = laikago.INIT_MOTOR_ANGLES 
+        target_pose = wide_target
     )
 
     # 4. Assemble
@@ -282,12 +287,16 @@ def build_sac_recovery_env(enable_randomizer, enable_rendering, robot_class=laik
         robot_sensors=sensors, 
         task=task)
 
+    trajectory_gen = simple_openloop.SimpleRobotOffsetGenerator(
+    pose=wide_target, 
+    action_limit=laikago.UPPER_BOUND
+    )
     # 5. Wrappers (Standardizing the Output)
     env = observation_dictionary_to_array_wrapper.ObservationDictionaryToArrayWrapper(env)
     
     # We use the same PoseOffsetGenerator so the Action Space is [-1, 1] for both models
     env = trajectory_generator_wrapper_env.TrajectoryGeneratorWrapperEnv(
         env,
-        trajectory_generator=simple_openloop.LaikagoPoseOffsetGenerator(action_limit=laikago.UPPER_BOUND))
+        trajectory_generator=trajectory_gen)
 
     return env

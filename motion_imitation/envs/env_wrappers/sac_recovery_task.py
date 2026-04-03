@@ -48,49 +48,64 @@ class SACRecoveryTask(object):
         This is called by your modified LocomotionGymEnv.reset().
         """
         print(f"DEBUG: Chaos Reset Triggered! Level: {self._curriculum_level}")
-        
-        # 1. Randomize Orientation (Full 3D Chaos)
-        level= self._curriculum_level
-        angle_limit = self._get_chaos_limits()
-        random_roll = random.uniform(-angle_limit, angle_limit)
-        random_pitch = random.uniform(-angle_limit, angle_limit)
-        random_yaw = random.uniform(-np.pi, np.pi)
-        
-        chaos_quat = env.pybullet_client.getQuaternionFromEuler([
-            random_roll, random_pitch, random_yaw
-        ])
 
-        # 2. HEIGHT (Curriculum Controlled)
-        # At 0.1: base_height is low (feet touching).
-        # At 1.0: base_height is 0.8m (dropping from air).
-        safe_height = 0.32 + (0.13 * np.cos(max(abs(random_roll), abs(random_pitch))))
-        safe_height = max(0.32, safe_height)
-        chaos_height = 0.6 + random.uniform(0, 0.2)
-        
-        # Linear interpolation between safe and chaos
-        spawn_height = (1 - level) * safe_height + (level * chaos_height)
-        random_pos = [0, 0, spawn_height] 
+        if random.random() < 1:
+            spawn_pos = [0, 0, 0.32] # Target height
+            spawn_quat = [0, 0, 0, 1] # Perfectly upright
+            joints = self._target_pose
+            print("[DEBUG]: joins=", joints)
+            print("DEBUG: Perfect Reset sneak peak")
 
-        # 3. JOINTS (Curriculum Controlled)
-        # At 0.1: Start exactly at Target Pose (Feet ready).
-        # At 1.0: Start with totally random joints (Legs tangled).
-        target_pose = np.array(self._target_pose)
-        random_noise = max(0, (level - 0.1) * 1.5) # Increases with level
-        
-        random_joints = [
-            t + random.uniform(-random_noise, random_noise) 
-            for t in target_pose
-        ]
+            env.robot.Reset(reload_urdf=False, 
+                            default_motor_angles=joints,
+                            reset_time=0.0)
+            env.pybullet_client.resetBasePositionAndOrientation(
+                env.robot.quadruped, spawn_pos, spawn_quat
+            )
+        else:
+            
+            # 1. Randomize Orientation (Full 3D Chaos)
+            level= self._curriculum_level
+            angle_limit = self._get_chaos_limits()
+            random_roll = random.uniform(-angle_limit, angle_limit)
+            random_pitch = random.uniform(-angle_limit, angle_limit)
+            random_yaw = random.uniform(-np.pi, np.pi)
+            
+            chaos_quat = env.pybullet_client.getQuaternionFromEuler([
+                random_roll, random_pitch, random_yaw
+            ])
 
-        # 4. Apply to Physics Engine
-        # We set reset_time=0 so the 'fall' starts instantly
-        env.robot.Reset(reload_urdf=False, 
-                        default_motor_angles=random_joints,
-                        reset_time=0.0)
-        
-        env.pybullet_client.resetBasePositionAndOrientation(
-            env.robot.quadruped, random_pos, chaos_quat
-        )
+            # 2. HEIGHT (Curriculum Controlled)
+            # At 0.1: base_height is low (feet touching).
+            # At 1.0: base_height is 0.8m (dropping from air).
+            safe_height = 0.32 + (0.13 * np.cos(max(abs(random_roll), abs(random_pitch))))
+            safe_height = max(0.32, safe_height)
+            chaos_height = 0.6 + random.uniform(0, 0.2)
+            
+            # Linear interpolation between safe and chaos
+            spawn_height = (1 - level) * safe_height + (level * chaos_height)
+            random_pos = [0, 0, spawn_height] 
+
+            # 3. JOINTS (Curriculum Controlled)
+            # At 0.1: Start exactly at Target Pose (Feet ready).
+            # At 1.0: Start with totally random joints (Legs tangled).
+            target_pose = np.array(self._target_pose)
+            random_noise = max(0, (level - 0.1) * 1.5) # Increases with level
+            
+            random_joints = [
+                t + random.uniform(-random_noise, random_noise) 
+                for t in target_pose
+            ]
+
+            # 4. Apply to Physics Engine
+            # We set reset_time=0 so the 'fall' starts instantly
+            env.robot.Reset(reload_urdf=False, 
+                            default_motor_angles=random_joints,
+                            reset_time=0.0)
+            
+            env.pybullet_client.resetBasePositionAndOrientation(
+                env.robot.quadruped, random_pos, chaos_quat
+            )
 
     def update_curriculum(self, success, steps_at_level):
         """
@@ -145,6 +160,7 @@ class SACRecoveryTask(object):
         """
         Multi-term reward for SAC to learn recovery.
         """
+        #print("DEBUG: Reward function called")
         robot = env.robot
         # Get current state
         cur_joints = robot.GetMotorAngles()
@@ -188,7 +204,7 @@ class SACRecoveryTask(object):
             r_progress += 20 * max(0, height_progress) # Bonus for progress if already somewhat upright and posed
 
         #Term 7: join interlocking penalty:
-        joint_penalty = -0.005 * np.sum(np.maximum(0, np.abs(cur_joints) - 2.5))
+        joint_penalty = -0.009 * np.sum(np.maximum(0, np.abs(cur_joints) - 2.5))
 
         # Term 8: Stability Bonus (Encourages staying in the zone)
         r_stability = 0.0
@@ -197,7 +213,7 @@ class SACRecoveryTask(object):
             
         # Term 9: Foot Contact (Encourages weight on feet, not knees)
         contact = sum(robot.GetFootContacts())
-        r_feet = 0.05 * contact
+        r_feet = 0.09 * contact
 
         # Total Weighted Reward
         # 0.5 Pose + 0.3 Upright + 0.2 Height + 0.01 Energy - 0.1 Time
@@ -232,9 +248,17 @@ class SACRecoveryTask(object):
 
         pose_good = pose_dist < 0.03
 
-        success= is_upright and is_high_enough and pose_good and is_stable
+        success= is_upright and is_high_enough #and pose_good and is_stable
         if success and self._standing_reward == 0.0:
             self._standing_reward = 20.0
         self.last_success = success # Store for curriculum update
         
+        if success:
+            print(f"Episode Success! Height: {round(base_pos[2], 3)}, Roll: {round(roll, 3)}, Pitch: {round(pitch, 3)}, Pose Dist: {round(pose_dist, 4)}, Lin Vel: {round(lin_vel, 3)}")
+            return True
+        
+        if env.env_step_counter > 600 and not success:
+            print(f"Episode Failure. Height: {round(base_pos[2], 3)}, Roll: {round(roll, 3)}, Pitch: {round(pitch, 3)}, Pose Dist: {round(pose_dist, 4)}, Lin Vel: {round(lin_vel, 3)}")
+            return True
+
         return success

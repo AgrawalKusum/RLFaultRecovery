@@ -209,6 +209,7 @@ class LocomotionGymEnv(gym.Env):
     Returns:
       A numpy array contains the initial observation after reset.
     """
+    #print("[DEBUG] Reset is called" )
     if self._is_render:
       self._pybullet_client.configureDebugVisualizer(
           self._pybullet_client.COV_ENABLE_RENDERING, 0)

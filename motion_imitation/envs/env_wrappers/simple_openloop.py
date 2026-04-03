@@ -169,6 +169,7 @@ class SimpleRobotOffsetGenerator(object):
                                                knee_angle_3=pose[11])))
         action_high = np.array([action_limit] * 12)
         self.action_space = spaces.Box(-action_high, action_high, dtype=np.float32)
+        self._scale=action_limit
 
     def reset(self):
         pass
@@ -182,7 +183,8 @@ class SimpleRobotOffsetGenerator(object):
           A numpy array. The desired motor angles.
         """
         del current_time
-        return self._pose + input_action
+        action=np.clip(input_action, -1, 1)
+        return self._pose + action * self._scale
 
     def get_observation(self, input_observation):
         """Get the trajectory generator's observation."""
