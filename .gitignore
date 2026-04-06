@@ -33,5 +33,3 @@ third_party/**/build/
 third_party/**/CMakeFiles/
 third_party/**/*.o
 third_party/**/*.a
-
-output_6_doubtful/

@@ -169,7 +169,8 @@ class SACRecoveryTask(object):
         # Term 1: Pose Reward (How close are we to the 'Ready' stance?)
         # Use negative MSE between current and target joints
         pose_dist = np.mean(np.square(cur_joints - self._target_pose))
-        r_pose = np.exp(-8.0 * pose_dist)
+        #r_pose = np.exp(-8.0 * pose_dist)
+        r_pose = -0.3 * pose_dist # Linear penalty for pose distance (encourages faster pose correction)
 
         # Term 2: Uprightness Reward (Penalty for being tilted)
         # We want roll and pitch to be near 0
