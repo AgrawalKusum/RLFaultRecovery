@@ -173,6 +173,8 @@ def train(model, env, total_timesteps, output_dir, int_save_freq, curriculum_pat
 
     model.save(os.path.join(output_dir, "final_model"))
     env.save(os.path.join(output_dir, "vec_normalize.pkl"))
+    model.save_replay_buffer(os.path.join(output_dir, "replay_buffer.pkl"))
+    
 
 def test(model, env, num_procs, num_episodes=None):
   curr_return = np.zeros(num_procs)
@@ -232,16 +234,26 @@ def main():
   arg_parser.add_argument("--model_file", type=str, default="")
   arg_parser.add_argument("--total_timesteps", type=int, default=30000000)
   arg_parser.add_argument("--int_save_freq", type=int, default=500000)
-
+  arg_parser.add_argument("--logdir", type=str, default="tensorboard_logs")
   args = arg_parser.parse_args()
   
   num_procs = 1
+  if args.mode == "train":
+    num_procs = 8
   os.environ["CUDA_VISIBLE_DEVICES"] = '-1'
 
   # 1. Setup Environment
   env = SubprocVecEnv([make_env(args) for _ in range(num_procs)])
 
   # 2. Initialization / Resume Logic
+  LOG_DIR = ""
+  if args.logdir != "":
+    LOG_DIR = os.path.join(args.logdir)
+  else:
+    LOG_DIR = os.path.join("tensorboard_logs")
+  if not os.path.exists(LOG_DIR):
+    os.makedirs(LOG_DIR)
+    print(f"TensorBoard logs will be saved to: {LOG_DIR}")
   if args.model_file != "":
     # Load Stats
     stats_path = os.path.join(os.path.dirname(args.model_file), "vec_normalize.pkl")
@@ -251,7 +263,8 @@ def main():
         env.training = (args.mode == "train")
         env.norm_reward = (args.mode == "train")
         print(f"Loaded Normalization Stats: {stats_path}")
-    
+
+    buffer_path = os.path.join(os.path.dirname(args.model_file), "replay_buffer.pkl")
     if os.path.exists(curriculum_path):
         env.env_method('load_curriculum', curriculum_path)
     else:
@@ -259,13 +272,17 @@ def main():
     
     # Load Weights
     model = SAC.load(args.model_file, env=env)
+    model.tensorboard_log = LOG_DIR
+    if os.path.exists(buffer_path):
+        model.load_replay_buffer(buffer_path)
+        print("Replay buffer restored.")
     print(f"Resuming SAC Model: {args.model_file}")
   else:
     print("Starting SAC Training from Scratch...")
     env = VecNormalize(env, norm_obs=True, norm_reward=True, clip_obs=10.)
     curriculum_path = os.path.join(args.output_dir, "curriculum_state.json")
 
-    model = SAC("MlpPolicy", env, verbose=1, tensorboard_log=args.output_dir,
+    model = SAC("MlpPolicy", env, verbose=1, tensorboard_log=LOG_DIR,
                 policy_kwargs=dict(net_arch=[512, 256]), 
                 buffer_size=1000000, batch_size=256, device="cpu")
 

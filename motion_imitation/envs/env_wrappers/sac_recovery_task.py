@@ -48,13 +48,12 @@ class SACRecoveryTask(object):
         This is called by your modified LocomotionGymEnv.reset().
         """
         print(f"DEBUG: Chaos Reset Triggered! Level: {self._curriculum_level}")
-
-        if random.random() < 0.2:
+        mode= random.random()
+        if mode < 0.1:
             spawn_pos = [0, 0, 0.32] # Target height
             spawn_quat = [0, 0, 0, 1] # Perfectly upright
             joints = self._target_pose
             #print("[DEBUG]: joins=", joints)
-            print("DEBUG: Perfect Reset sneak peak")
 
             env.robot.Reset(reload_urdf=False, 
                             default_motor_angles=joints,
@@ -62,13 +61,18 @@ class SACRecoveryTask(object):
             env.pybullet_client.resetBasePositionAndOrientation(
                 env.robot.quadruped, spawn_pos, spawn_quat
             )
+            for _ in range(20):
+                env.pybullet_client.stepSimulation()
         else:
-            
-            # 1. Randomize Orientation (Full 3D Chaos)
             level= self._curriculum_level
             angle_limit = self._get_chaos_limits()
-            random_roll = random.uniform(-angle_limit, angle_limit)
-            random_pitch = random.uniform(-angle_limit, angle_limit)
+            if mode < 0.3:
+                random_roll = random.choice([np.pi/2, -np.pi/2])
+                random_pitch = random.uniform(-np.pi/2, np.pi/2)
+                print(f"[DEBUG] Extreme Roll Mode: Roll={round(random_roll, 2)}, Pitch={round(random_pitch, 2)}")         
+            else:
+                random_roll = random.uniform(-angle_limit, angle_limit)
+                random_pitch = random.uniform(-angle_limit, angle_limit)
             random_yaw = random.uniform(-np.pi, np.pi)
             
             chaos_quat = env.pybullet_client.getQuaternionFromEuler([
@@ -76,14 +80,13 @@ class SACRecoveryTask(object):
             ])
 
             # 2. HEIGHT (Curriculum Controlled)
-            # At 0.1: base_height is low (feet touching).
-            # At 1.0: base_height is 0.8m (dropping from air).
             safe_height = 0.32 + (0.13 * np.cos(max(abs(random_roll), abs(random_pitch))))
             safe_height = max(0.32, safe_height)
-            chaos_height = 0.6 + random.uniform(0, 0.2)
+            chaos_height = 0.6+random.uniform(0, 0.2)
             
             # Linear interpolation between safe and chaos
             spawn_height = (1 - level) * safe_height + (level * chaos_height)
+            #spawn_height = max(0.25, spawn_height) # Don't go below 0.15m to avoid ground clipping
             random_pos = [0, 0, spawn_height] 
 
             # 3. JOINTS (Curriculum Controlled)
@@ -106,6 +109,9 @@ class SACRecoveryTask(object):
             env.pybullet_client.resetBasePositionAndOrientation(
                 env.robot.quadruped, random_pos, chaos_quat
             )
+            env.pybullet_client.resetBaseVelocity(env.robot.quadruped, linearVelocity=np.random.uniform(-0.5*level,0.5*level,3), angularVelocity=np.random.uniform(-3*level,3*level,3))
+            for _ in range(20):
+                env.pybullet_client.stepSimulation()
 
     def update_curriculum(self, success, steps_at_level):
         """
@@ -220,7 +226,7 @@ class SACRecoveryTask(object):
         # 0.5 Pose + 0.3 Upright + 0.2 Height + 0.01 Energy - 0.1 Time
         total_reward = (0.5* r_pose) + (0.4 * r_upright) + (0.3 * r_height) + r_energy + r_time + joint_penalty + r_progress + self._standing_reward+ r_stability + r_feet
         
-        if random.random() < 0.0001:
+        if random.random() < 0.00005:
             print("Height:", base_pos[2], "Progress:", height_progress)
 
         return total_reward
@@ -259,7 +265,6 @@ class SACRecoveryTask(object):
             return True
         
         if env.env_step_counter > 600 and not success:
-            print(f"Episode Failure. Height: {round(base_pos[2], 3)}, Roll: {round(roll, 3)}, Pitch: {round(pitch, 3)}, Pose Dist: {round(pose_dist, 4)}, Lin Vel: {round(lin_vel, 3)}")
             return True
 
         return success
