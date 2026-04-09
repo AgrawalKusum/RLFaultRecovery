@@ -255,7 +255,7 @@ class SACRecoveryTask(object):
 
         pose_good = pose_dist < 0.03
 
-        success= is_upright and is_high_enough #and pose_good and is_stable
+        success= is_upright and is_high_enough and pose_good #and is_stable
         if success and self._standing_reward == 0.0:
             self._standing_reward = 20.0
         self.last_success = success # Store for curriculum update
