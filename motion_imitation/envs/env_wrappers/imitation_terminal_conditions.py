@@ -28,7 +28,7 @@ from pybullet_utils import transformations
 
 def imitation_terminal_condition(env,
                                  dist_fail_threshold=1.0,
-                                 rot_fail_threshold=0.5 * np.pi):
+                                 rot_fail_threshold=np.pi): #keep 0.5*np.pi for training
   """A terminal condition for motion imitation task.
 
   Args:
@@ -56,10 +56,10 @@ def imitation_terminal_condition(env,
     robot_ground_contacts = env.pybullet_client.getContactPoints(
         bodyA=env.robot.quadruped, bodyB=ground)
 
-    for contact in robot_ground_contacts:
-      if contact[3] not in foot_links:
-        contact_fall = True
-        break
+    # for contact in robot_ground_contacts:         #uncomment for training
+    #   if contact[3] not in foot_links:
+    #     contact_fall = True
+    #     break
 
   root_pos_ref, root_rot_ref = pyb.getBasePositionAndOrientation(
       task.get_ref_model())

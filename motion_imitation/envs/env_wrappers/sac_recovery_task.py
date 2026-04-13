@@ -53,7 +53,7 @@ class SACRecoveryTask(object):
             spawn_pos = [0, 0, 0.32] # Target height
             spawn_quat = [0, 0, 0, 1] # Perfectly upright
             joints = self._target_pose
-            #print("[DEBUG]: joins=", joints)
+            print("[DEBUG]: Perfect reset")
 
             env.robot.Reset(reload_urdf=False, 
                             default_motor_angles=joints,
@@ -182,14 +182,14 @@ class SACRecoveryTask(object):
         # We want roll and pitch to be near 0
         orientation_dist = np.sqrt(roll**2 + pitch**2)
         r_upright = np.exp(-3.0 * orientation_dist)
-
+        r_upright += 0.2 * (np.pi - orientation_dist) / np.pi #new addition
         # Term 3: Height Reward
         # Encourage the base to be at a standing height (~0.45m for Laikago)
         #base_pos, _ = robot.GetBasePositionAndOrientation()
         base_pos = robot.GetBasePosition()
         target_height = 0.32
         r_height = np.clip(base_pos[2] / target_height, 0, 1)
-
+        #r_height = np.exp(-15.0 * abs(base_pos[2] - target_height))  #new addition
         # Term 4: Energy Penalty
         # Discourage spastic leg movements (helps SAC converge on smooth motions)
         r_energy = -0.002 * np.mean(np.square(robot.GetMotorVelocities()))
@@ -255,7 +255,7 @@ class SACRecoveryTask(object):
 
         pose_good = pose_dist < 0.03
 
-        success= is_upright and is_high_enough and pose_good #and is_stable
+        success= is_upright and is_high_enough #and pose_good #and is_stable
         if success and self._standing_reward == 0.0:
             self._standing_reward = 20.0
         self.last_success = success # Store for curriculum update

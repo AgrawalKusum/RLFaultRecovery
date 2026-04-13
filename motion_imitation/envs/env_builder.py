@@ -83,9 +83,9 @@ def build_imitation_env(motion_files, num_parallel_envs, mode,
                         trajectory_generator=simple_openloop.LaikagoPoseOffsetGenerator(action_limit=laikago.UPPER_BOUND)):
   assert len(motion_files) > 0
 
-  curriculum_episode_length_start = 600
-  curriculum_episode_length_end = 600
-  
+  curriculum_episode_length_start = 1000  #keep 600 for training
+  curriculum_episode_length_end = 1000    #keep 600 for training
+
   sim_params = locomotion_gym_config.SimulationParameters()
   sim_params.sim_time_step_s= 0.001
   sim_params.num_action_repeat = 10
