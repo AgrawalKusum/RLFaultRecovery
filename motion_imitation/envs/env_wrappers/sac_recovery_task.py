@@ -49,7 +49,7 @@ class SACRecoveryTask(object):
         """
         print(f"DEBUG: Chaos Reset Triggered! Level: {self._curriculum_level}")
         mode= random.random()
-        if mode < 0.1:
+        if mode < 0.2:
             spawn_pos = [0, 0, 0.32] # Target height
             spawn_quat = [0, 0, 0, 1] # Perfectly upright
             joints = self._target_pose
@@ -66,7 +66,7 @@ class SACRecoveryTask(object):
         else:
             level= self._curriculum_level
             angle_limit = self._get_chaos_limits()
-            if mode < 0.3:
+            if mode < 0.4:
                 random_roll = random.choice([np.pi/2, -np.pi/2])
                 random_pitch = random.uniform(-np.pi/2, np.pi/2)
                 print(f"[DEBUG] Extreme Roll Mode: Roll={round(random_roll, 2)}, Pitch={round(random_pitch, 2)}")         
@@ -181,18 +181,23 @@ class SACRecoveryTask(object):
         # Term 2: Uprightness Reward (Penalty for being tilted)
         # We want roll and pitch to be near 0
         orientation_dist = np.sqrt(roll**2 + pitch**2)
-        r_upright = np.exp(-3.0 * orientation_dist)
-        r_upright += 0.2 * (np.pi - orientation_dist) / np.pi #new addition
+        #r_upright = np.exp(-3.0 * orientation_dist)
+        r_upright = (np.cos(roll) + 1) / 2 + (np.cos(pitch) + 1) / 2 #new addition
+        if r_upright < 0.5:
+            r_pose = 0.0 # If it's really tilted, don't even reward pose (encourage it to focus on getting upright first)
+
         # Term 3: Height Reward
         # Encourage the base to be at a standing height (~0.45m for Laikago)
         #base_pos, _ = robot.GetBasePositionAndOrientation()
         base_pos = robot.GetBasePosition()
         target_height = 0.32
-        r_height = np.clip(base_pos[2] / target_height, 0, 1)
-        #r_height = np.exp(-15.0 * abs(base_pos[2] - target_height))  #new addition
+        #r_height = np.clip(base_pos[2] / target_height, 0, 1)
+        r_height = np.exp(-15.0 * abs(base_pos[2] - target_height))  #new addition
+
+
         # Term 4: Energy Penalty
         # Discourage spastic leg movements (helps SAC converge on smooth motions)
-        r_energy = -0.002 * np.mean(np.square(robot.GetMotorVelocities()))
+        r_energy = -0.005 * np.mean(np.square(robot.GetMotorVelocities()))
 
         #Term 5: Time Penalty
         # Encourage faster recovery by penalizing time taken
@@ -222,9 +227,22 @@ class SACRecoveryTask(object):
         contact = sum(robot.GetFootContacts())
         r_feet = 0.09 * contact
 
+        #Term 10: for upside down pose
+        r_exploration = 0
+        if orientation_dist > 1: # If tilted more than 90 degrees
+            # Reward it for moving its body to find a way to flip
+            _, angular_vel = robot._pybullet_client.getBaseVelocity(robot.quadruped)
+            r_exploration = 0.1 * np.linalg.norm(angular_vel)
+
+        #Term 11: for direction
+        orientation = robot.GetBaseOrientation()
+        matrix = robot._pybullet_client.getMatrixFromQuaternion(orientation)
+        r_align = matrix[8]  # dot with world up
+
+
         # Total Weighted Reward
         # 0.5 Pose + 0.3 Upright + 0.2 Height + 0.01 Energy - 0.1 Time
-        total_reward = (0.5* r_pose) + (0.4 * r_upright) + (0.3 * r_height) + r_energy + r_time + joint_penalty + r_progress + self._standing_reward+ r_stability + r_feet
+        total_reward = (0.5* r_pose) + (0.4 * r_upright) + (0.3 * r_height) + r_energy + r_time + joint_penalty + r_progress + self._standing_reward+ r_stability + r_feet + r_exploration + (0.5*r_align)
         
         if random.random() < 0.00005:
             print("Height:", base_pos[2], "Progress:", height_progress)
