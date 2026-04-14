@@ -24,7 +24,7 @@ class SACRecoveryTask(object):
 
         self._standing_reward = 0.0 # Bonus for successfully standing up (encourages SAC to find it)
         self._prev_height = None # For progress reward
-
+        self._prev_align = 0.0
     def __call__(self, env):
         """This makes the task object 'callable' like a function."""
         return self.reward(env)
@@ -42,6 +42,9 @@ class SACRecoveryTask(object):
         self._prev_height = None # Reset height tracking for progress reward
         self._standing_reward = 0.0 # Reset standing reward
 
+        orientation = env.robot.GetBaseOrientation()
+        matrix = env.pybullet_client.getMatrixFromQuaternion(orientation)
+        self._prev_align = matrix[8]
     def custom_reset(self, env):
         """
         The 'Chaos' Reset: Randomizes 3D Orientation and Joint Angles.
@@ -209,11 +212,11 @@ class SACRecoveryTask(object):
 
         height_progress = base_pos[2] - self._prev_height
         self._prev_height = base_pos[2]
-        r_progress = 20 * max(0,height_progress)
+        r_progress = 8 * max(0,height_progress)
         if base_pos[2] > 0.35:
             r_progress = 0.0
         if pose_dist < 0.15 and r_upright > 0.5:
-            r_progress += 20 * max(0, height_progress) # Bonus for progress if already somewhat upright and posed
+            r_progress += 8 * max(0, height_progress) # Bonus for progress if already somewhat upright and posed
 
         #Term 7: join interlocking penalty:
         joint_penalty = -0.009 * np.sum(np.maximum(0, np.abs(cur_joints) - 2.5))
@@ -227,18 +230,14 @@ class SACRecoveryTask(object):
         contact = sum(robot.GetFootContacts())
         r_feet = 0.09 * contact
 
-        #Term 10: for upside down pose
-        r_exploration = 0
-        if orientation_dist > 1: # If tilted more than 90 degrees
-            # Reward it for moving its body to find a way to flip
-            _, angular_vel = robot._pybullet_client.getBaseVelocity(robot.quadruped)
-            r_exploration = 0.1 * np.linalg.norm(angular_vel)
-
-        #Term 11: for direction
+        #Term 10: for direction
         orientation = robot.GetBaseOrientation()
         matrix = robot._pybullet_client.getMatrixFromQuaternion(orientation)
         r_align = matrix[8]  # dot with world up
 
+        #Term 11: for upside down pose
+        r_exploration = 0.1 * (r_align - self._prev_align)
+        self._prev_align = r_align
 
         # Total Weighted Reward
         # 0.5 Pose + 0.3 Upright + 0.2 Height + 0.01 Energy - 0.1 Time
