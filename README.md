@@ -115,8 +115,3 @@ python3 -m motion_imitation.run_sacRecovery \
   --logdir output \
   --model_file output_test1/final_model.zip
 ```
-
-## 📁 Directory Structure & Notes
-
-- **`models/`**: Stores the pre-trained `.zip` (weights) and `.pkl` (normalization) files of nominal training.
-- **Headless Mode**: Remove `--visualize` from any command to run without a GUI.
