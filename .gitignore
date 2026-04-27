@@ -33,3 +33,10 @@ third_party/**/build/
 third_party/**/CMakeFiles/
 third_party/**/*.o
 third_party/**/*.a
+
+intermediate/
+PPO_0/
+PPO_1/
+PPO_2/
+SAC_0/
+replay_buffer.pkl
