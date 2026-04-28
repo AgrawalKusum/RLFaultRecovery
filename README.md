@@ -41,7 +41,7 @@ pip install -r requirements.txt
 Verify the baseline gait (96M step model).
 
 ```bash
-python3 -m motion_imitation.run_test \
+python3 -m motion_imitation.run_recovery \
   --mode test \
   --motion_file motion_imitation/data/motions/dog_pace.txt \
   --model_file models/final_model.zip \
